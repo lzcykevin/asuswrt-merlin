@@ -1,8 +1,7 @@
 /**************************************************************************
  *   rcfile.c  --  This file is part of GNU nano.                         *
  *                                                                        *
- *   Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009,  *
- *   2010, 2011, 2013, 2014 Free Software Foundation, Inc.                *
+ *   Copyright (C) 2001-2011, 2013-2017 Free Software Foundation, Inc.    *
  *   Copyright (C) 2014 Mike Frysinger                                    *
  *   Copyright (C) 2014, 2015, 2016 Benno Schulenberg                     *
  *                                                                        *
@@ -31,7 +30,7 @@
 #include <unistd.h>
 #include <ctype.h>
 
-#ifndef DISABLE_NANORC
+#ifdef ENABLE_NANORC
 
 #ifndef RCFILE_NAME
 #define RCFILE_NAME ".nanorc"
@@ -45,8 +44,8 @@ static const rcoption rcopts[] = {
 #ifndef DISABLE_JUSTIFY
     {"brackets", 0},
 #endif
-    {"const", CONST_UPDATE},  /* deprecated form, remove in 2018 */
-    {"constantshow", CONST_UPDATE},
+    {"const", CONSTANT_SHOW},  /* deprecated form, remove in 2018 */
+    {"constantshow", CONSTANT_SHOW},
 #ifndef DISABLE_WRAPJUSTIFY
     {"fill", 0},
 #endif
@@ -54,10 +53,10 @@ static const rcoption rcopts[] = {
     {"historylog", HISTORYLOG},
 #endif
     {"morespace", MORE_SPACE},
-#ifndef DISABLE_MOUSE
+#ifdef ENABLE_MOUSE
     {"mouse", USE_MOUSE},
 #endif
-#ifndef DISABLE_MULTIBUFFER
+#ifdef ENABLE_MULTIBUFFER
     {"multibuffer", MULTIBUFFER},
 #endif
     {"nohelp", NO_HELP},
@@ -78,6 +77,7 @@ static const rcoption rcopts[] = {
     {"punct", 0},
     {"quotestr", 0},
 #endif
+    {"quickblank", QUICK_BLANK},
     {"rebinddelete", REBIND_DELETE},
     {"rebindkeypad", REBIND_KEYPAD},
     {"regexp", USE_REGEXP},
@@ -90,17 +90,18 @@ static const rcoption rcopts[] = {
     {"view", VIEW_MODE},
 #ifndef NANO_TINY
     {"allow_insecure_backup", INSECURE_BACKUP},
+    {"atblanks", AT_BLANKS},
     {"autoindent", AUTOINDENT},
     {"backup", BACKUP_FILE},
     {"backupdir", 0},
     {"backwards", BACKWARDS_SEARCH},
     {"casesensitive", CASE_SENSITIVE},
-    {"cut", CUT_TO_END},
+    {"cut", CUT_FROM_CURSOR},  /* deprecated form, remove in 2020 */
+    {"cutfromcursor", CUT_FROM_CURSOR},
     {"justifytrim", JUSTIFY_TRIM},
     {"locking", LOCKING},
     {"matchbrackets", 0},
     {"noconvert", NO_CONVERT},
-    {"quickblank", QUICK_BLANK},
     {"quiet", QUIET},
     {"showcursor", SHOW_CURSOR},
     {"smarthome", SMART_HOME},
@@ -160,9 +161,9 @@ void rcfile_error(const char *msg, ...)
 
     fprintf(stderr, "\n");
 }
-#endif /* !DISABLE_NANORC */
+#endif /* ENABLE_NANORC */
 
-#if !defined(DISABLE_NANORC) || !defined(DISABLE_HISTORIES)
+#if defined(ENABLE_NANORC) || !defined(DISABLE_HISTORIES)
 /* Parse the next word from the string, null-terminate it, and return
  * a pointer to the first character after the null terminator.  The
  * returned pointer will point to '\0' if we hit the end of the line. */
@@ -182,9 +183,9 @@ char *parse_next_word(char *ptr)
 
     return ptr;
 }
-#endif /* !DISABLE_NANORC || !DISABLE_HISTORIES */
+#endif /* ENABLE_NANORC || !DISABLE_HISTORIES */
 
-#ifndef DISABLE_NANORC
+#ifdef ENABLE_NANORC
 /* Parse an argument, with optional quotes, after a keyword that takes
  * one.  If the next word starts with a ", we say that it ends with the
  * last " of the line.  Otherwise, we interpret it as usual, so that the
@@ -316,7 +317,9 @@ void parse_syntax(char *ptr)
     live_syntax->magics = NULL;
     live_syntax->linter = NULL;
     live_syntax->formatter = NULL;
-    live_syntax->comment = NULL;
+#ifdef ENABLE_COMMENT
+    live_syntax->comment = mallocstrcpy(NULL, GENERAL_COMMENT_CHARACTER);
+#endif
     live_syntax->color = NULL;
     lastcolor = NULL;
     live_syntax->nmultis = 0;
@@ -347,11 +350,13 @@ void parse_syntax(char *ptr)
 /* Check whether the given executable function is "universal" (meaning
  * any horizontal movement or deletion) and thus is present in almost
  * all menus. */
-bool is_universal(void (*func))
+bool is_universal(void (*func)(void))
 {
     if (func == do_left || func == do_right ||
 	func == do_home_void || func == do_end_void ||
+#ifndef NANO_TINY
 	func == do_prev_word_void || func == do_next_word_void ||
+#endif
 	func == do_verbatim_input || func == do_cut_text_void ||
 	func == do_delete || func == do_backspace ||
 	func == do_tab || func == do_enter)
@@ -608,8 +613,6 @@ void parse_includes(char *ptr)
  * and set bright to TRUE if that color is bright. */
 short color_to_short(const char *colorname, bool *bright)
 {
-    assert(colorname != NULL && bright != NULL);
-
     if (strncasecmp(colorname, "bright", 6) == 0) {
 	*bright = TRUE;
 	colorname += 6;
@@ -648,8 +651,6 @@ void parse_colors(char *ptr, int rex_flags)
     short fg, bg;
     bool bright = FALSE;
     char *item;
-
-    assert(ptr != NULL);
 
     if (!opensyntax) {
 	rcfile_error(
@@ -724,9 +725,6 @@ void parse_colors(char *ptr, int rex_flags)
 
 	    newcolor->next = NULL;
 
-#ifdef DEBUG
-	    fprintf(stderr, "Adding an entry for fg %hd, bg %hd\n", fg, bg);
-#endif
 	    if (lastcolor == NULL)
 		live_syntax->color = newcolor;
 	    else
@@ -777,33 +775,22 @@ void parse_colors(char *ptr, int rex_flags)
 /* Parse the color name, or pair of color names, in combostr. */
 bool parse_color_names(char *combostr, short *fg, short *bg, bool *bright)
 {
-    bool no_fgcolor = FALSE;
+    char *comma = strchr(combostr, ',');
 
-    if (combostr == NULL)
-	return FALSE;
-
-    if (strchr(combostr, ',') != NULL) {
-	char *bgcolorname;
-	strtok(combostr, ",");
-	bgcolorname = strtok(NULL, ",");
-	if (bgcolorname == NULL) {
-	    /* If we have a background color without a foreground color,
-	     * parse it properly. */
-	    bgcolorname = combostr + 1;
-	    no_fgcolor = TRUE;
-	}
-	if (strncasecmp(bgcolorname, "bright", 6) == 0) {
-	    rcfile_error(N_("Background color \"%s\" cannot be bright"), bgcolorname);
+    if (comma != NULL) {
+	*bg = color_to_short(comma + 1, bright);
+	if (*bright) {
+	    rcfile_error(N_("A background color cannot be bright"));
 	    return FALSE;
 	}
-	*bg = color_to_short(bgcolorname, bright);
+	*comma = '\0';
     } else
 	*bg = -1;
 
-    if (!no_fgcolor) {
+    if (comma != combostr) {
 	*fg = color_to_short(combostr, bright);
 
-	/* Don't try to parse screwed-up foreground colors. */
+	/* If the specified foreground color is bad, ignore the regexes. */
 	if (*fg == -1)
 	    return FALSE;
     } else
@@ -876,7 +863,7 @@ void grab_and_store(const char *kind, char *ptr, regexlisttype **storage)
     }
 }
 
-/* Parse and store the name given after a linter/formatter command. */
+/* Gather and store the string after a comment/linter/formatter command. */
 void pick_up_name(const char *kind, char *ptr, char **storage)
 {
     assert(ptr != NULL);
@@ -888,35 +875,27 @@ void pick_up_name(const char *kind, char *ptr, char **storage)
     }
 
     if (*ptr == '\0') {
-	rcfile_error(N_("Missing command after '%s'"), kind);
+	rcfile_error(N_("Missing argument after '%s'"), kind);
 	return;
     }
 
-    free(*storage);
+    /* If the argument starts with a quote, find the terminating quote. */
+    if (*ptr == '"') {
+	char *look = ++ptr;
 
-    /* Allow unsetting the command by using an empty string. */
-    if (!strcmp(ptr, "\"\""))
-	*storage = NULL;
-    else if (*ptr == '"') {
-	*storage = mallocstrcpy(NULL, ++ptr);
-	char* q = *storage;
-	char* p = *storage;
-	/* Snip out the backslashes of escaped characters. */
-	while (*p != '"') {
-	    if (*p == '\0') {
+	look += strlen(ptr);
+
+	while (*look != '"') {
+	    if (--look < ptr) {
 		rcfile_error(N_("Argument of '%s' lacks closing \""), kind);
-		free(*storage);
-		*storage = NULL;
 		return;
-	    } else if (*p == '\\' && *(p + 1) != '\0') {
-		p++;
 	    }
-	    *q++ = *p++;
 	}
-	*q = '\0';
+	*look = '\0';
     }
-    else
-	*storage = mallocstrcpy(NULL, ptr);
+
+    *storage = mallocstrcpy(*storage, ptr);
+
 }
 #endif /* !DISABLE_COLOR */
 
@@ -1301,4 +1280,4 @@ void do_rcfiles(void)
     }
 }
 
-#endif /* !DISABLE_NANORC */
+#endif /* ENABLE_NANORC */

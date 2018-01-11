@@ -1,8 +1,7 @@
 /**************************************************************************
  *   browser.c  --  This file is part of GNU nano.                        *
  *                                                                        *
- *   Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009,  *
- *   2010, 2011, 2013, 2014, 2015 Free Software Foundation, Inc.          *
+ *   Copyright (C) 2001-2011, 2013-2017 Free Software Foundation, Inc.    *
  *   Copyright (C) 2015, 2016 Benno Schulenberg                           *
  *                                                                        *
  *   GNU nano is free software: you can redistribute it and/or modify     *
@@ -28,7 +27,7 @@
 #include <unistd.h>
 #include <errno.h>
 
-#ifndef DISABLE_BROWSER
+#ifdef ENABLE_BROWSER
 
 static char **filelist = NULL;
 	/* The list of files to display in the file browser. */
@@ -123,7 +122,7 @@ char *do_browser(char *path)
 
 	kbinput = get_kbinput(edit);
 
-#ifndef DISABLE_MOUSE
+#ifdef ENABLE_MOUSE
 	if (kbinput == KEY_MOUSE) {
 	    int mouse_x, mouse_y;
 
@@ -152,7 +151,7 @@ char *do_browser(char *path)
 
 	    continue;
 	}
-#endif /* !DISABLE_MOUSE */
+#endif /* ENABLE_MOUSE */
 
 	func = parse_browser_input(&kbinput);
 
@@ -163,7 +162,7 @@ char *do_browser(char *path)
 	    kbinput = KEY_WINCH;
 #endif
 	} else if (func == do_help_void) {
-#ifndef DISABLE_HELP
+#ifdef ENABLE_HELP
 	    do_help_void();
 #ifndef NANO_TINY
 	    /* The window dimensions might have changed, so act as if. */
@@ -184,20 +183,29 @@ char *do_browser(char *path)
 	} else if (func == do_right) {
 	    if (selected < filelist_len - 1)
 		selected++;
-#ifndef NANO_TINY
 	} else if (func == do_prev_word_void) {
 	    selected -= (selected % width);
 	} else if (func == do_next_word_void) {
 	    selected += width - 1 - (selected % width);
 	    if (selected >= filelist_len)
 		selected = filelist_len - 1;
-#endif
 	} else if (func == do_up_void) {
 	    if (selected >= width)
 		selected -= width;
 	} else if (func == do_down_void) {
 	    if (selected + width <= filelist_len - 1)
 		selected += width;
+	} else if (func == do_prev_block) {
+	    selected = ((selected / (editwinrows * width)) *
+				editwinrows * width) + selected % width;
+	} else if (func == do_next_block) {
+	    selected = ((selected / (editwinrows * width)) *
+				editwinrows * width) + selected % width +
+				editwinrows * width - width;
+	    if (selected >= filelist_len)
+		selected = (filelist_len / width) * width + selected % width;
+	    if (selected >= filelist_len)
+		selected -= width;
 	} else if (func == do_page_up) {
 	    if (selected < width)
 		selected = 0;
@@ -480,7 +488,11 @@ functionptrtype parse_browser_input(int *kbinput)
 		return do_enter;
 	    case 'W':
 	    case 'w':
+	    case '/':
 		return do_search;
+	    case 'N':
+	    case 'n':
+		return do_research;
 	}
     }
     return func_from_key(kbinput);
@@ -798,4 +810,4 @@ char *strip_last_component(const char *path)
     return copy;
 }
 
-#endif /* !DISABLE_BROWSER */
+#endif /* ENABLE_BROWSER */

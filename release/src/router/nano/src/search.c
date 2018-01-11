@@ -1,8 +1,7 @@
 /**************************************************************************
  *   search.c  --  This file is part of GNU nano.                         *
  *                                                                        *
- *   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007,  *
- *   2008, 2009, 2010, 2011, 2013, 2014 Free Software Foundation, Inc.    *
+ *   Copyright (C) 1999-2011, 2013-2017 Free Software Foundation, Inc.    *
  *   Copyright (C) 2015, 2016, 2017 Benno Schulenberg                     *
  *                                                                        *
  *   GNU nano is free software: you can redistribute it and/or modify     *
@@ -144,7 +143,8 @@ int search_init(bool replacing, bool use_answer)
 
     /* This is now one simple call.  It just does a lot. */
     i = do_prompt(FALSE, FALSE,
-		replacing ? MREPLACE : MWHEREIS, backupstring,
+		inhelp ? MFINDINHELP : (replacing ? MREPLACE : MWHEREIS),
+		backupstring,
 #ifndef DISABLE_HISTORIES
 		&search_history,
 #endif
@@ -202,7 +202,7 @@ int search_init(bool replacing, bool use_answer)
 	TOGGLE(USE_REGEXP);
 	backupstring = mallocstrcpy(backupstring, answer);
 	return 1;
-    } else if (func == do_replace || func == flip_replace_void) {
+    } else if (func == flip_replace) {
 	backupstring = mallocstrcpy(backupstring, answer);
 	return -2;	/* Call the opposite search function. */
     } else if (func == do_gotolinecolumn_void) {
@@ -234,8 +234,10 @@ int findnextstr(const char *needle, bool whole_word_only, bool have_region,
     size_t found_x;
 	/* The x coordinate of a found occurrence. */
     time_t lastkbcheck = time(NULL);
+	/* The time we last looked at the keyboard. */
 
-    enable_nodelay();
+    /* Set non-blocking input so that we can just peek for a Cancel. */
+    disable_waiting();
 
     if (begin == NULL)
 	came_full_circle = FALSE;
@@ -252,7 +254,7 @@ int findnextstr(const char *needle, bool whole_word_only, bool have_region,
 	    while (input) {
 		if (func_from_key(&input) == do_cancel) {
 		    statusbar(_("Cancelled"));
-		    disable_nodelay();
+		    enable_waiting();
 		    return -2;
 		}
 		input = parse_kbinput(NULL);
@@ -303,7 +305,7 @@ int findnextstr(const char *needle, bool whole_word_only, bool have_region,
 	/* If we're back at the beginning, then there is no needle. */
 	if (came_full_circle) {
 	    not_found_msg(needle);
-	    disable_nodelay();
+	    enable_waiting();
 	    return 0;
 	}
 
@@ -317,7 +319,7 @@ int findnextstr(const char *needle, bool whole_word_only, bool have_region,
 	 * but stop when spell-checking or replacing in a region. */
 	if (line == NULL) {
 	    if (whole_word_only || have_region) {
-		disable_nodelay();
+		enable_waiting();
 		return 0;
 	    }
 
@@ -343,15 +345,14 @@ int findnextstr(const char *needle, bool whole_word_only, bool have_region,
 
     found_x = found - line->data;
 
+    enable_waiting();
+
     /* Ensure that the found occurrence is not beyond the starting x. */
     if (came_full_circle && ((!ISSET(BACKWARDS_SEARCH) && found_x > begin_x) ||
 			(ISSET(BACKWARDS_SEARCH) && found_x < begin_x))) {
 	not_found_msg(needle);
-	disable_nodelay();
 	return 0;
     }
-
-    disable_nodelay();
 
     /* Set the current position to point at what we found. */
     openfile->current = line;
@@ -361,8 +362,11 @@ int findnextstr(const char *needle, bool whole_word_only, bool have_region,
     if (match_len != NULL)
 	*match_len = found_len;
 
-    if (feedback > 0)
+    /* Wipe the "Searching..." message and unset the suppression flag. */
+    if (feedback > 0) {
 	blank_statusbar();
+	suppress_cursorpos = FALSE;
+    }
 
     return 1;
 }
@@ -438,7 +442,6 @@ void go_looking(void)
 {
     filestruct *was_current = openfile->current;
     size_t was_current_x = openfile->current_x;
-    int didfind;
 #ifdef DEBUG
     clock_t start = clock();
 #endif
@@ -611,10 +614,9 @@ ssize_t do_replace_loop(const char *needle, bool whole_word_only,
 	    numreplaced = 0;
 
 	if (!replaceall) {
-	    size_t xpt = xplustabs();
-	    char *exp_word = display_string(openfile->current->data,
-			xpt, strnlenpt(openfile->current->data,
-			openfile->current_x + match_len) - xpt, FALSE);
+	    size_t from_col = xplustabs();
+	    size_t to_col = strnlenpt(openfile->current->data,
+					openfile->current_x + match_len);
 
 	    /* Refresh the edit window, scrolling it if necessary. */
 	    edit_refresh();
@@ -622,14 +624,12 @@ ssize_t do_replace_loop(const char *needle, bool whole_word_only,
 	    /* Don't show cursor, to not distract from highlighted match. */
 	    curs_set(0);
 
-	    spotlight(TRUE, exp_word);
+	    spotlight(TRUE, from_col, to_col);
 
 	    /* TRANSLATORS: This is a prompt. */
 	    i = do_yesno_prompt(TRUE, _("Replace this instance?"));
 
-	    spotlight(FALSE, exp_word);
-
-	    free(exp_word);
+	    spotlight(FALSE, from_col, to_col);
 
 	    if (i == -1)  /* The replacing was cancelled. */
 		break;
@@ -856,10 +856,10 @@ void do_gotolinecolumn(ssize_t line, ssize_t column, bool use_answer,
 	    return;
 	}
     } else {
-	if (line < 1)
+	if (line == 0)
 	    line = openfile->current->lineno;
 
-	if (column < 1)
+	if (column == 0)
 	    column = openfile->placewewant + 1;
     }
 
@@ -884,6 +884,12 @@ void do_gotolinecolumn(ssize_t line, ssize_t column, bool use_answer,
     openfile->current_x = actual_x(openfile->current->data, column - 1);
     openfile->placewewant = column - 1;
 
+#ifndef NANO_TINY
+    if (ISSET(SOFTWRAP) && openfile->placewewant / editwincols >
+			strlenpt(openfile->current->data) / editwincols)
+	openfile->placewewant = strlenpt(openfile->current->data);
+#endif
+
     /* When the position was manually given, center the target line. */
     if (interactive) {
 	adjust_viewport(CENTERING);
@@ -894,7 +900,7 @@ void do_gotolinecolumn(ssize_t line, ssize_t column, bool use_answer,
 #ifndef NANO_TINY
 	if (ISSET(SOFTWRAP)) {
 	    filestruct *line = openfile->current;
-	    size_t leftedge = (xplustabs() / editwincols) * editwincols;
+	    size_t leftedge = leftedge_for(xplustabs(), openfile->current);
 
 	    rows_from_tail = (editwinrows / 2) -
 			go_forward_chunks(editwinrows / 2, &line, &leftedge);
@@ -906,7 +912,7 @@ void do_gotolinecolumn(ssize_t line, ssize_t column, bool use_answer,
 	/* If the target line is close to the tail of the file, put the last
 	 * line or chunk on the bottom line of the screen; otherwise, just
 	 * center the target line. */
-	if (rows_from_tail < editwinrows / 2) {
+	if (rows_from_tail < editwinrows / 2 && ISSET(SMOOTH_SCROLL)) {
 	    openfile->current_y = editwinrows - 1 - rows_from_tail;
 	    adjust_viewport(STATIONARY);
 	} else
@@ -994,7 +1000,7 @@ void do_find_bracket(void)
 	 * the bracket at the current cursor position. */
     int wanted_ch_len;
 	/* The length of wanted_ch in bytes. */
-    char *bracket_set;
+    char bracket_set[MAXCHARLEN * 2 + 1];
 	/* The pair of characters in ch and wanted_ch. */
     size_t i;
 	/* Generic loop variable. */
@@ -1008,8 +1014,6 @@ void do_find_bracket(void)
 	/* The initial bracket count. */
     bool reverse;
 	/* The direction we search. */
-    char *found_ch;
-	/* The character we find. */
 
     assert(mbstrlen(matchbrackets) % 2 == 0);
 
@@ -1057,20 +1061,16 @@ void do_find_bracket(void)
     wanted_ch_len = parse_mbchar(wanted_ch, NULL, NULL);
 
     /* Fill bracket_set in with the values of ch and wanted_ch. */
-    bracket_set = charalloc((mb_cur_max() * 2) + 1);
     strncpy(bracket_set, ch, ch_len);
     strncpy(bracket_set + ch_len, wanted_ch, wanted_ch_len);
     bracket_set[ch_len + wanted_ch_len] = '\0';
-
-    found_ch = charalloc(mb_cur_max() + 1);
 
     while (TRUE) {
 	if (find_bracket_match(reverse, bracket_set)) {
 	    /* If we found an identical bracket, increment count.  If we
 	     * found a complementary bracket, decrement it. */
-	    parse_mbchar(openfile->current->data + openfile->current_x,
-			found_ch, NULL);
-	    count += (strncmp(found_ch, ch, ch_len) == 0) ? 1 : -1;
+	    count += (strncmp(openfile->current->data + openfile->current_x,
+				 ch, ch_len) == 0) ? 1 : -1;
 
 	    /* If count is zero, we've found a matching bracket.  Update
 	     * the screen and get out. */
@@ -1088,10 +1088,6 @@ void do_find_bracket(void)
 	    break;
 	}
     }
-
-    /* Clean up. */
-    free(bracket_set);
-    free(found_ch);
 }
 #endif /* !NANO_TINY */
 
@@ -1235,7 +1231,7 @@ void get_history_older_void(void)
     ;
 }
 
-#ifndef DISABLE_TABCOMP
+#ifdef ENABLE_TABCOMP
 /* Move h to the next string that's a tab completion of the string s,
  * looking at only the first len characters of s, and return that
  * string.  If there isn't one, or if len is 0, don't move h and return
@@ -1288,5 +1284,5 @@ char *get_history_completion(filestruct **h, char *s, size_t len)
      * match, or len is 0.  Return s. */
     return (char *)s;
 }
-#endif /* !DISABLE_TABCOMP */
+#endif /* ENSABLE_TABCOMP */
 #endif /* !DISABLE_HISTORIES */

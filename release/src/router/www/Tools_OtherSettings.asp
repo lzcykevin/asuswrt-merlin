@@ -944,13 +944,6 @@ function done_validating(action){
 							<td colspan="2">Advanced Tweaks and Hacks</td>
 						</tr>
 					</thead>
-					<tr>
-						<th>Samba: Enable SMB2 protocol (default: No)</th>
-						<td>
-							<input type="radio" name="smbd_enable_smb2" class="input" value="1" <% nvram_match_x("", "smbd_enable_smb2", "1", "checked"); %>><#checkbox_Yes#>
-							<input type="radio" name="smbd_enable_smb2" class="input" value="0" <% nvram_match_x("", "smbd_enable_smb2", "0", "checked"); %>><#checkbox_No#>
-						</td>
-	                                </tr>
 					<tr id="memory_mgmt_tr" style="display:none;">
 						<th><a class="hintstyle" href="javascript:void(0);" onClick="openHint(50,2);">Memory Management: Regularly flush caches (default: Yes)</a></th>
 						<td>
@@ -977,6 +970,13 @@ function done_validating(action){
 						<td>
 							<input type="radio" name="dns_probe" class="input" value="1"><#checkbox_Yes#>
 							<input type="radio" name="dns_probe" class="input" value="0"><#checkbox_No#>
+						</td>
+					</tr>
+					<tr>
+						<th>Disable Asusnat tunnel</th>
+						<td>
+							<input type="radio" name="aae_disable_force" class="input" value="1" <% nvram_match_x("", "aae_disable_force", "1", "checked"); %>><#checkbox_Yes#>
+							<input type="radio" name="aae_disable_force" class="input" value="0" <% nvram_match_x("", "aae_disable_force", "0", "checked"); %>><#checkbox_No#>
 						</td>
 					</tr>
 

@@ -254,6 +254,10 @@ config RTCONFIG_PROXYSTA
 	bool "Proxy STA"
 	default n
 
+config RTCONFIG_DISABLE_PROXYSTA_UI
+	bool "Hiden UI Media Bridge Mode"
+	default n
+
 config RTCONFIG_CONCURRENTREPEATER
 	bool "Concurrent Repeater"
 	default n
@@ -344,6 +348,11 @@ config RTCONFIG_MEDIA_SERVER
 	depends on RTCONFIG_USB
 	default n
 
+config RTCONFIG_LIMIT_MEDIA_SERVER
+	bool "Small memory optimization on Media Server"
+	depends on RTCONFIG_MEDIA_SERVER
+	default n
+
 config RTCONFIG_CLOUDSYNC
 	bool "Cloudsync (Cloud Client)"
 	depends on RTCONFIG_USB
@@ -403,11 +412,6 @@ config RTCONFIG_SAMBA3
 	bool "Compile with Samba 3"
 	depends on RTCONFIG_SAMBASRV
 	default n
-
-config RTCONFIG_SAMBA_MODERN
-        bool "Compile with modern Samba 3.6.x"
-        depends on RTCONFIG_SAMBASRV
-        default n
 
 config RTCONFIG_NFS 
 	bool "NFS Support" 
@@ -495,11 +499,6 @@ config RTCONFIG_DISK_MONITOR
 	depends on RTCONFIG_USB
 	default n
 
-config RTCONFIG_DISK_MONITOR
-	bool "Disk monitor Support"
-	depends on RTCONFIG_USB
-	default n
-
 config RTCONFIG_USB_PRINTER
 	bool "USB Printer Support"
 	depends on RTCONFIG_USB
@@ -543,11 +542,6 @@ config RTCONFIG_APP_PREINSTALLED
 config RTCONFIG_APP_NETINSTALLED
 	bool "Install APP Packages through Network Support"
 	depends on RTCONFIG_USB
-	default n
-
-config RTCONFIG_APP_NOLOCALDM
-	bool "Apps are preinstalled except for Downloadmaster"
-	depends on RTCONFIG_APP_NETINSTALLED
 	default n
 
 config RTCONFIG_RALINK

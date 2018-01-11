@@ -1,8 +1,7 @@
 /**************************************************************************
  *   cut.c  --  This file is part of GNU nano.                            *
  *                                                                        *
- *   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007,  *
- *   2008, 2009, 2010, 2011, 2013, 2014 Free Software Foundation, Inc.    *
+ *   Copyright (C) 1999-2011, 2013-2017 Free Software Foundation, Inc.    *
  *   Copyright (C) 2014 Mark Majeres                                      *
  *   Copyright (C) 2016 Benno Schulenberg                                 *
  *                                                                        *
@@ -109,8 +108,8 @@ void cut_to_eof(void)
 }
 #endif /* !NANO_TINY */
 
-/* Move text from the current filestruct into the cutbuffer.  If
- * copy_text is TRUE, copy the text back into the filestruct afterward.
+/* Move text from the current buffer into the cutbuffer.  If
+ * copy_text is TRUE, copy the text back into the buffer afterward.
  * If cut_till_eof is TRUE, move all text from the current cursor
  * position to the end of the file into the cutbuffer. */
 void do_cut_text(bool copy_text, bool cut_till_eof)
@@ -156,7 +155,7 @@ void do_cut_text(bool copy_text, bool cut_till_eof)
 	/* Move the marked text to the cutbuffer, and turn the mark off. */
 	cut_marked(&right_side_up);
 	openfile->mark_set = FALSE;
-    } else if (ISSET(CUT_TO_END))
+    } else if (ISSET(CUT_FROM_CURSOR))
 	/* Move all text up to the end of the line into the cutbuffer. */
 	cut_to_eol();
     else
@@ -202,7 +201,7 @@ void do_cut_text(bool copy_text, bool cut_till_eof)
 #endif
 }
 
-/* Move text from the current filestruct into the cutbuffer. */
+/* Move text from the current buffer into the cutbuffer. */
 void do_cut_text_void(void)
 {
 #ifndef NANO_TINY
@@ -215,8 +214,8 @@ void do_cut_text_void(void)
 }
 
 #ifndef NANO_TINY
-/* Move text from the current filestruct into the cutbuffer, and copy it
- * back into the filestruct afterward.  If the mark is set or the cursor
+/* Move text from the current buffer into the cutbuffer, and copy it
+ * back into the buffer afterward.  If the mark is set or the cursor
  * was moved, blow away previous contents of the cutbuffer. */
 void do_copy_text(void)
 {
@@ -249,13 +248,13 @@ void do_copy_text(void)
 /* Cut from the current cursor position to the end of the file. */
 void do_cut_till_eof(void)
 {
-    add_undo(CUT_EOF);
+    add_undo(CUT_TO_EOF);
     do_cut_text(FALSE, TRUE);
-    update_undo(CUT_EOF);
+    update_undo(CUT_TO_EOF);
 }
 #endif /* !NANO_TINY */
 
-/* Copy text from the cutbuffer into the current filestruct. */
+/* Copy text from the cutbuffer into the current buffer. */
 void do_uncut_text(void)
 {
     ssize_t was_lineno = openfile->current->lineno;
@@ -271,10 +270,10 @@ void do_uncut_text(void)
     add_undo(PASTE);
 
     if (ISSET(SOFTWRAP))
-	was_leftedge = (xplustabs() / editwincols) * editwincols;
+	was_leftedge = leftedge_for(xplustabs(), openfile->current);
 #endif
 
-    /* Add a copy of the text in the cutbuffer to the current filestruct
+    /* Add a copy of the text in the cutbuffer to the current buffer
      * at the current cursor position. */
     copy_from_buffer(cutbuffer);
 
@@ -292,8 +291,8 @@ void do_uncut_text(void)
     /* Mark the file as modified. */
     set_modified();
 
-    /* Update the cursor position to account for the inserted lines. */
-    reset_cursor();
+    /* Update current_y to account for the inserted lines. */
+    place_the_cursor(TRUE);
 
     refresh_needed = TRUE;
 

@@ -230,6 +230,7 @@ extern int getPSK(void);
 extern int start_envrams(void);
 extern int chk_envrams_proc(void);
 #endif
+extern int ate_run_arpstrom(void);
 
 /* tcode_rc.c */
 #ifdef RTCONFIG_TCODE
@@ -407,6 +408,8 @@ extern void reset_psr_hwaddr();
 extern void ldo_patch();
 extern int wl_channel_valid(char *wif, int channel);
 extern int wl_subband(char *wif, int idx);
+extern void check_4366_dummy(void);
+extern void check_4366_fabid(void);
 #endif
 extern void wl_dfs_radarthrs_config(char *ifname, int unit);
 #ifdef RTCONFIG_BCM_7114
@@ -480,6 +483,7 @@ extern void fa_nvram_adjust();
 extern void adjust_merlin_config();
 extern void adjust_url_urlelist();
 extern void adjust_ddns_config();
+extern void adjust_access_restrict_config();
 
 // interface.c
 extern int _ifconfig(const char *name, int flags, const char *addr, const char *netmask, const char *dstaddr, int mtu);
@@ -526,11 +530,6 @@ extern void wan6_up(const char *wan_ifname);
 extern void wan6_down(const char *wan_ifname);
 extern void start_wan6(void);
 extern void stop_wan6(void);
-#endif
-#if defined(RTCONFIG_WANRED_LED)
-extern int test_gateway(char *gw, char *wan_ifname);
-#else
-static inline int test_gateway(char *gw, char *wan_ifname) { return 0; }
 #endif
 extern int do_dns_detect(int wan_unit);
 
@@ -680,6 +679,8 @@ extern void update_wan_state(char *prefix, int state, int reason);
 extern int update_resolvconf(void);
 
 /* qos.c */
+extern void set_codel_patch(void);
+extern void remove_codel_patch(void);
 extern int start_iQos(void);
 extern void stop_iQos(void);
 extern void del_iQosRules(void);
@@ -808,6 +809,7 @@ extern int start_ots(void);
 extern int rand_seed_by_time(void);
 
 // common.c
+extern char *conv_mac2(char *mac, char *buf);
 extern void killall_tk_period_wait(const char *name, int wait);
 extern void usage_exit(const char *cmd, const char *help) __attribute__ ((noreturn));
 #define modprobe(mod, args...) ({ char *argv[] = { "modprobe", "-s", mod, ## args, NULL }; _eval(argv, NULL, 0, NULL); })
@@ -962,10 +964,12 @@ extern void run_vpn_firewall_scripts();
 extern void write_vpn_dnsmasq_config(FILE*);
 extern int write_vpn_resolv(FILE*);
 extern void create_openvpn_passwd();
+extern void update_ovpn_profie_remote();
 extern int check_ovpn_server_enabled(int unit);
 extern int check_ovpn_client_enabled(int unit);
 extern void update_vpnrouting(int unit);
 extern void reset_vpn_settings(int type, int unit);
+extern void stop_vpn_all();
 #endif
 
 // wanduck.c
@@ -1032,12 +1036,11 @@ extern void dsl_defaults(void);
 #endif
 
 //services.c
+void start_Tor_proxy(void);
+void stop_Tor_proxy(void);
 extern void write_static_leases(char *file);
 #ifdef RTCONFIG_DHCP_OVERRIDE
 extern int restart_dnsmasq(int need_link_DownUp);
-#endif
-#ifdef RTCONFIG_DNSFILTER
-extern int get_dns_filter(int proto, int mode, char **server);
 #endif
 extern void start_dnsmasq(void);
 extern void stop_dnsmasq(void);
@@ -1089,6 +1092,13 @@ void restart_cstats(void);
 void stop_cstats(void);
 extern void setup_leds();
 int ddns_custom_updated_main(int argc, char *argv[]);
+
+// dnsfilter.c
+#ifdef RTCONFIG_DNSFILTER
+extern void dnsfilter_settings(FILE *fp, char *lan_ip);
+extern void dnsfilter6_settings(FILE *fp, char *lan_if, char *lan_ip);
+extern void dnsfilter_setup_dnsmasq(FILE *fp);
+#endif
 
 // lan.c
 #ifdef RTCONFIG_TIMEMACHINE

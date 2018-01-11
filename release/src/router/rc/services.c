@@ -42,6 +42,9 @@
 #include <sys/utsname.h>
 #include <sys/param.h>
 #include <net/ethernet.h>
+#ifdef RTCONFIG_TOR
+#include <pwd.h>
+#endif
 
 #ifdef RTCONFIG_RALINK
 #include <ralink.h>
@@ -568,6 +571,9 @@ void create_passwd(void)
 		p = crypt(p, salt);
 		fprintf(f, "%s:%s:0:0:99999:7:0:0:\n"
 			   "nobody:*:0:0:99999:7:0:0:\n", http_user, p);
+#ifdef RTCONFIG_TOR
+		fprintf(f, "tor:*:0:0:99999:7:0:0:\n");
+#endif
 #ifdef RTCONFIG_SAMBASRV	//!!TB
 		fprintf(f, "%s:*:0:0:99999:7:0:0:\n", smbd_user);
 #endif
@@ -590,15 +596,21 @@ void create_passwd(void)
 	sprintf(s,
 		"%s:x:0:0:%s:/root:/bin/sh\n"
 		"%s:x:100:100:nas:/dev/null:/dev/null\n"
-		"nobody:x:65534:65534:nobody:/dev/null:/dev/null\n",
-		http_user,
+		"nobody:x:65534:65534:nobody:/dev/null:/dev/null\n"
+#ifdef RTCONFIG_TOR
+		"tor:x:65533:65533:tor:/dev/null:/dev/null\n"
+#endif
+		,http_user,
 		http_user,
 		smbd_user);
 #else	//!!TB
 	sprintf(s,
 		"%s:x:0:0:%s:/root:/bin/sh\n"
-		"nobody:x:65534:65534:nobody:/dev/null:/dev/null\n",
-		http_user,
+		"nobody:x:65534:65534:nobody:/dev/null:/dev/null\n"
+#ifdef RTCONFIG_TOR
+                "tor:x:65533:65533:tor:/dev/null:/dev/null\n"
+#endif
+		,http_user,
 		http_user);
 #endif	//!!TB
 	f_write_string("/etc/passwd", s, 0, 0644);
@@ -614,20 +626,25 @@ void create_passwd(void)
 #ifdef RTCONFIG_SAMBASRV	//!!TB
 		"nas:*:100:\n"
 #endif
-		"nobody:*:65534:\n",
-		http_user);
+		"nobody:*:65534:\n"
+#ifdef RTCONFIG_TOR
+		"tor:*:65533:\n"
+#endif
+		, http_user);
 	f_write_string("/etc/gshadow", s, 0, 0644);
 	fappend_file("/etc/gshadow", "/etc/gshadow.custom");
         fappend_file("/etc/gshadow", "/jffs/configs/gshadow.add");
 	run_postconf("gshadow","/etc/gshadow");
-
 	f_write_string("/etc/group",
 		"root:x:0:\n"
 #ifdef RTCONFIG_SAMBASRV	//!!TB
 		"nas:x:100:\n"
 #endif
-		"nobody:x:65534:\n",
-		0, 0644);
+		"nobody:x:65534:\n"
+#ifdef RTCONFIG_TOR
+		"tor:x:65533:\n"
+#endif
+		, 0, 0644);
 	fappend_file("/etc/group", "/etc/group.custom");
 #ifdef RTCONFIG_OPENVPN
 	fappend_file("/etc/group", "/etc/group.openvpn");
@@ -833,7 +850,7 @@ static void link_up(void)
 int restart_dnsmasq(int need_link_DownUp)
 {
 	if (need_link_DownUp) {
-#if (defined(PLN12) || defined(PLAC56) || defined(PLAC66))
+#if (defined(PLN11) || defined(PLN12) || defined(PLAC56) || defined(PLAC66))
 		nvram_set("plc_ready", "0");
 #endif
 		link_down();
@@ -846,7 +863,7 @@ int restart_dnsmasq(int need_link_DownUp)
 
 	if (need_link_DownUp) {
 		link_up();
-#if (defined(PLN12) || defined(PLAC56) || defined(PLAC66))
+#if (defined(PLN11) || defined(PLN12) || defined(PLAC56) || defined(PLAC66))
 		nvram_set("plc_ready", "1");
 #endif
 	}
@@ -1219,41 +1236,9 @@ void start_dnsmasq(void)
 #endif /* RTCONFIG_YANDEXDNS */
 
 #ifdef RTCONFIG_DNSFILTER
-		if (nvram_get_int("dnsfilter_enable_x")) {
-			unsigned char ea[ETHER_ADDR_LEN];
-			char *name, *mac, *mode, *enable, *server[2];
-			char *nv, *nvp, *b;
-			int count, dnsmode, defmode = nvram_get_int("dnsfilter_mode");
-
-			for (dnsmode = 1; dnsmode < 13; dnsmode++) {
-				if (dnsmode == defmode)
-					continue;
-				count = get_dns_filter(AF_INET6, dnsmode, server);
-				if (count == 0)
-					continue;
-				fprintf(fp, "dhcp-option=dnsf%u,option6:23,[%s]", dnsmode, server[0]);
-				if (count == 2)
-					fprintf(fp, ",[%s]", server[1]);
-				fprintf(fp, "\n");
-			}
-			/* DNS server per client */
-			nv = nvp = strdup(nvram_safe_get("dnsfilter_rulelist"));
-			while (nv && (b = strsep(&nvp, "<")) != NULL) {
-				if (vstrsep(b, ">", &name, &mac, &mode, &enable) < 3)
-					continue;
-				if (enable && atoi(enable) == 0)
-					continue;
-				if (!*mac || !*mode || !ether_atoe(mac, ea))
-					continue;
-				dnsmode = atoi(mode);
-				/* Skip unfiltered, default, or non-IPv6 capable levels */
-				if ((dnsmode == 0) || (dnsmode == defmode) || (get_dns_filter(AF_INET6, dnsmode, server) == 0))
-					continue;
-				fprintf(fp, "dhcp-host=%s,set:dnsf%u\n", mac, dnsmode);
-			}
-			free(nv);
-		}
-#endif /* DNSFilter */
+		if (nvram_get_int("dnsfilter_enable_x"))
+			dnsfilter_setup_dnsmasq(fp);
+#endif
 
 		/* DNS server */
 		fprintf(fp, "dhcp-option=lan,option6:23,[::]\n");
@@ -2393,6 +2378,10 @@ ddns_updated_main(int argc, char *argv[])
 
 	logmessage("ddns", "ddns update ok");
 
+#ifdef RTCONFIG_OPENVPN
+	update_ovpn_profie_remote();
+#endif
+
 	_dprintf("done\n");
 
 	return 0;
@@ -2591,6 +2580,10 @@ stop_ddns(void)
 		killall("ez-ipupdate", SIGINT);
 	if (pids("phddns"))
 		killall("phddns", SIGINT);
+
+#ifdef RTCONFIG_OPENVPN
+	update_ovpn_profie_remote();
+#endif
 }
 
 int
@@ -2774,7 +2767,7 @@ _dprintf("%s:\n", __FUNCTION__);
 	start_klogd();
 
 #if defined(DUMP_PREV_OOPS_MSG) && defined(RTCONFIG_BCMARM)
-#if defined(RTAC88U) || defined(RTAC3100) || defined(RTAC5300)|| defined(RTAC5300R)
+#if defined(RTAC88U) || defined(RTAC3100) || defined(RTAC5300)|| defined(RTAC5300R) || defined(RTCONFIG_BCM9)
 	eval("et", "dump", "oops");
 #else
 	eval("et", "dump_oops");
@@ -3198,7 +3191,7 @@ void start_upnp(void)
 	char *nv, *nvp, *b;
 	int upnp_enable, upnp_mnp_enable, upnp_port;
 	int unit, i, httpx_port, cnt;
-#if defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NETINSTALLED) || defined(RTCONFIG_APP_NOLOCALDM)
+#if defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NETINSTALLED)
 	FILE *ifp = NULL;
 	char tmpstr[80];
 	int statDownloadMaster = 0;
@@ -3233,15 +3226,11 @@ void start_upnp(void)
 					upnp_port = 0;
 
 #if defined(RTCONFIG_RGMII_BRCM5301X)
-				strcpy(et0macaddr, nvram_safe_get("lan_hwaddr"));
-#elif defined(RTCONFIG_GMAC3)
-				if (nvram_match("gmac3_enable", "1"))
-					strcpy(et0macaddr, nvram_safe_get("et2macaddr"));
-				else
-					strcpy(et0macaddr, nvram_safe_get("et0macaddr"));
+				strlcpy(et0macaddr, nvram_safe_get("lan_hwaddr"), sizeof (et0macaddr));
 #else
-				strcpy(et0macaddr, get_lan_hwaddr());
+				strlcpy(et0macaddr, get_lan_hwaddr(), sizeof (et0macaddr));
 #endif
+
 				if (strlen(et0macaddr))
 					for (i = 0; i < strlen(et0macaddr); i++)
 						et0macaddr[i] = tolower(et0macaddr[i]);;
@@ -3363,7 +3352,7 @@ void start_upnp(void)
 				}
 #endif
 
-#if defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NETINSTALLED) || defined(RTCONFIG_APP_NOLOCALDM)
+#if defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NETINSTALLED)
 				ifp = fopen("/opt/lib/ipkg/status", "r");
 				if (ifp) {
 					while (fgets(tmpstr, 80, ifp)) {
@@ -3402,10 +3391,10 @@ void start_upnp(void)
 #endif
 
 				int ports[4];
-				if ((ports[0] = nvram_get_int("upnp_min_port_int")) > 0 &&
-				    (ports[1] = nvram_get_int("upnp_max_port_int")) > 0 &&
-				    (ports[2] = nvram_get_int("upnp_min_port_ext")) > 0 &&
-				    (ports[3] = nvram_get_int("upnp_max_port_ext")) > 0) {
+				if ((ports[0] = nvram_get_int("upnp_min_port_ext")) > 0 &&
+				    (ports[1] = nvram_get_int("upnp_max_port_ext")) > 0 &&
+				    (ports[2] = nvram_get_int("upnp_min_port_int")) > 0 &&
+				    (ports[3] = nvram_get_int("upnp_max_port_int")) > 0) {
 					fprintf(f,
 						"allow %d-%d %s/%s %d-%d\n",
 						ports[0], ports[1],
@@ -3616,14 +3605,7 @@ int generate_mdns_config(void)
 
 	sprintf(avahi_config, "%s/%s", AVAHI_CONFIG_PATH, AVAHI_CONFIG_FN);
 
-#if defined(RTCONFIG_GMAC3)
-	if (nvram_match("gmac3_enable", "1"))
-		strcpy(et0macaddr, nvram_safe_get("et2macaddr"));
-	else
-		strcpy(et0macaddr, nvram_safe_get("et0macaddr"));
-#else
-	strcpy(et0macaddr, get_lan_hwaddr());
-#endif
+	strlcpy(et0macaddr, get_lan_hwaddr(), sizeof (et0macaddr));
 
 	/* Generate avahi configuration file */
 	if (!(fp = fopen(avahi_config, "w"))) {
@@ -3945,7 +3927,7 @@ reset_plc(void)
 	if (nvram_match("plc_ready", "0"))
 		return;
 
-#if defined(PLN12)
+#if defined(PLN11) || defined(PLN12)
 	if (!get_qca8337_PHY_power(1))
 		doSystem("swconfig dev %s port 1 set power 1", MII_IFNAME);
 #elif defined(PLAC56)
@@ -5900,7 +5882,9 @@ stop_services(void)
 #ifdef RTCONFIG_SSH
 	stop_sshd();
 #endif
-
+#ifdef RTCONFIG_PROTECTION_SERVER
+	stop_ptcsrv();
+#endif
 #ifdef RTCONFIG_SNMPD
 	stop_snmpd();
 #endif
@@ -6373,24 +6357,31 @@ int start_quagga(void)
 		fprintf(fp, "hostname %s\n", zebra_hostname);
 		fprintf(fp, "password %s\n", zebra_passwd);
 		fprintf(fp, "enable password %s\n", zebra_enpasswd);
-		fprintf(fp, "log file /etc/zebra.log\n");
+		fprintf(fp, "log file /etc/zebra.log informational\n");
+		append_custom_config("zebra.conf",fp);
 		fclose(fp);
+		use_custom_config("zebra.conf","/etc/zebra.conf");
+		run_postconf("zebra","/etc/zebra.conf");
 		eval("zebra", "-d", "-f", "/etc/zebra.conf");
 	}
 	if ((fp2 = fopen("/etc/ripd.conf", "w"))){
 		fprintf(fp2, "hostname %s\n", rip_hostname);
 		fprintf(fp2, "password %s\n", rip_passwd);
-		fprintf(fp2, "debug rip events\n");
-		fprintf(fp2, "debug rip packet\n");
+//		fprintf(fp2, "debug rip events\n");
+//		fprintf(fp2, "debug rip packet\n");
 		fprintf(fp2, "router rip\n");
 		fprintf(fp2, " version 2\n");
 		fprintf(fp2, " network vlan2\n");
 		fprintf(fp2, " network vlan3\n");
 		fprintf(fp2, " passive-interface vlan2\n");
 		fprintf(fp2, " passive-interface vlan3\n");
-		fprintf(fp2, "log file /etc/ripd.log\n");
+		fprintf(fp2, "log file /etc/ripd.log informational\n");
 		fprintf(fp2, "log stdout\n");
+
+		append_custom_config("ripd.conf",fp2);
 		fclose(fp2);
+		use_custom_config("ripd.conf","/etc/ripd.conf");
+		run_postconf("ripd","/etc/ripd.conf");
 		eval("ripd", "-d", "-f", "/etc/ripd.conf");
 	}
 	return 0;
@@ -6450,7 +6441,7 @@ void handle_notifications(void)
 	int action = 0;
 	int count;
 	int i;
-#ifdef RTCONFIG_USB_MODEM
+#if defined(RTCONFIG_USB_MODEM) || defined(RTCONFIG_DUALWAN)
 	int unit;
 #endif
 
@@ -6685,6 +6676,9 @@ again:
 			reset_plc();
 #endif
 			// TODO free necessary memory here
+			// Free kernel page cache
+			system("echo 1 > /proc/sys/vm/drop_caches");
+			sleep(2);
 		}
 		if(action & RC_SERVICE_START) {
 			int sw = 0, r;
@@ -7275,7 +7269,6 @@ again:
 #ifdef RTCONFIG_DUALWAN
 	else if(!strcmp(script, "multipath")){
 		char mode[4], if_now[16], if_next[16];
-		int unit;
 		int unit_now = wan_primary_ifunit();
 		int unit_next = (unit_now+1)%WAN_UNIT_MAX;
 		int state_now = is_wan_connect(unit_now);
@@ -7950,27 +7943,17 @@ check_ddr_done:
 	}
 	else if(!strncmp(script, "modemscan", 9)){
 		char *at_cmd[] = {"/usr/sbin/modem_status.sh", "scan", NULL};
-		int usb_unit;
+
 #ifdef RTCONFIG_DUALWAN
-		char word[256], *next;
-
-		usb_unit = 0;
-		foreach(word, nvram_safe_get("wans_dualwan"), next){
-			if(!strcmp(word, "usb")){
-				break;
-			}
-
-			++usb_unit;
-		}
+		unit = get_usbif_dualwan_unit();
 #else
-		usb_unit = 1;
+		unit = 1;
 #endif
 
-		if(usb_unit != WAN_UNIT_MAX){
+		if(unit >= 0){
 			nvram_set("usb_modem_act_scanning", "3");
 
-			stop_wan_if(usb_unit);
-			start_wan_if(usb_unit);
+			stop_wan_if(unit);
 
 			_eval(at_cmd, ">/tmp/modem_action.ret", 0, NULL);
 		}
@@ -8940,7 +8923,7 @@ check_ddr_done:
 		update_resolvconf();
 	}
 	else if (strcmp(script, "app") == 0) {
-#if defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NETINSTALLED) || defined(RTCONFIG_APP_NOLOCALDM)
+#if defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NETINSTALLED)
 		if(action & RC_SERVICE_STOP)
 			stop_app();
 #endif
@@ -9462,7 +9445,7 @@ int start_nat_rules(void)
 {
 	char *fn = NAT_RULES, ln[PATH_MAX];
 	struct stat s;
-	int i, len, retry, nat_state;
+	int len, retry, nat_state;
 
 	// all rules applied directly according to currently status, wanduck help to triger those not cover by normal flow
  	if (nvram_match("x_Setting", "0")) {
@@ -9543,7 +9526,7 @@ int stop_nat_rules(void)
 	dump_nat_table("start_nat_rules");
 #endif
 
-	return;
+	return NAT_STATE_REDIRECT;;
 }
 
 #ifdef RTCONFIG_TOAD
@@ -9866,14 +9849,15 @@ int check_rsasign(char *fname)
         }
     }
 
-    fclose(dataFileFP);
-
     if (ferror(dataFileFP)) {
         _dprintf("input file");
         EVP_PKEY_free(pkey);
+        fclose(dataFileFP);
 	free(sig);
         return 0;
     }
+
+    fclose(dataFileFP);
 
     if (!EVP_VerifyFinal(&ctx, sig, siglen, pkey)) {
         _dprintf("EVP_VerifyFinal: failed.\n");
@@ -9915,6 +9899,15 @@ void stop_Tor_proxy(void)
 		killall("Tor", SIGTERM);
 	sleep(1);
 	remove("/tmp/torlog");
+
+#if (defined(RTCONFIG_JFFS2)||defined(RTCONFIG_BRCM_NAND_JFFS2))
+	if (f_exists("/tmp/.tordb/cached-microdesc-consensus") &&
+	    !f_exists("/jffs/.tordb/cached-microdesc-consensus"))
+	{
+		//logmessage("Tor", "Backing up database");
+		eval("cp", "-fa", "/tmp/.tordb", "/jffs/.tordb");
+	}
+#endif
 }
 
 void start_Tor_proxy(void)
@@ -9926,8 +9919,8 @@ void start_Tor_proxy(void)
 	char *Socksport;
 	char *Transport;
 	char *Dnsport;
-	struct stat mdstat_jffs, mdstat_tmp;
-	int mdesc_stat_jffs, mdesc_stat_tmp;
+	struct stat mdstat_jffs;
+	struct passwd *pw;
 
 	stop_Tor_proxy();
 
@@ -9938,12 +9931,17 @@ void start_Tor_proxy(void)
 		return;
 
 #if (defined(RTCONFIG_JFFS2)||defined(RTCONFIG_BRCM_NAND_JFFS2))
-	mdesc_stat_tmp = stat("/tmp/.tordb/cached-microdesc-consensus", &mdstat_tmp);
-	if(mdesc_stat_tmp == -1){
-		mdesc_stat_jffs = stat("/jffs/.tordb/cached-microdesc-consensus", &mdstat_jffs);
-		if(mdesc_stat_jffs != -1){
+	if (stat("/jffs/.tordb/cached-microdesc-consensus", &mdstat_jffs) != -1) {
+		if(difftime(time(NULL), mdstat_jffs.st_mtime) > 60*60*24*7) {
+			logmessage("Tor", "Removing stale DB backup");
+			eval("rm", "-rf", "/jffs/.tordb");
+		} else if (!f_exists("/tmp/.tordb/cached-microdesc-consensus")) {
 			_dprintf("Tor: restore microdescriptor directory\n");
-			eval("cp", "-rf", "/jffs/.tordb", "/tmp/.tordb");
+			pw = getpwuid(mdstat_jffs.st_uid);
+			if ((pw) && (strcmp(pw->pw_name, "tor"))){
+				eval("chown", "-R", "tor.tor","/jffs/.tordb");
+			}
+			eval("cp", "-fa", "/jffs/.tordb", "/tmp/.tordb");
 			sleep(1);
 		}
 	}
@@ -9961,6 +9959,7 @@ void start_Tor_proxy(void)
 	fprintf(fp, "RunAsDaemon 1\n");
 	fprintf(fp, "DataDirectory /tmp/.tordb\n");
 	fprintf(fp, "AvoidDiskWrites 1\n");
+	fprintf(fp, "User tor\n");
 
 	append_custom_config("torrc", fp);
 	fclose(fp);
@@ -10188,88 +10187,6 @@ void restart_cstats(void)
         }
 }
 
-#ifdef RTCONFIG_DNSFILTER
-// ARG: server must be an array of two pointers, each pointing to an array of chars
-int get_dns_filter(int proto, int mode, char **server)
-{
-	int count = 0;
-	static char *server_table[13][2] = {
-		{"", ""},				/* 0: Unfiltered (handled separately below) */
-		{"208.67.222.222", ""},	/* 1: OpenDNS */
-		{"199.85.126.10", ""},	/* 2: Norton Connect Safe A (Security) */
-		{"199.85.126.20", ""},	/* 3: Norton Connect Safe B (Security + Adult) */
-		{"199.85.126.30", ""},	/* 4: Norton Connect Safe C (Sec. + Adult + Violence */
-		{"77.88.8.88", ""},		/* 5: Secure Mode safe.dns.yandex.ru */
-		{"77.88.8.7", ""},		/* 6: Family Mode family.dns.yandex.ru */
-		{"208.67.222.123", ""},	/* 7: OpenDNS Family Shield */
-		{"", ""},				/* 8: Custom1 */
-		{"", ""},				/* 9: Custom2 */
-		{"", ""},				/* 10: Custom3 */
-		{"", ""},				/* 11: Router */
-		{"8.26.56.26", ""}		/* 12: Comodo Secure DNS */
-        };
-#ifdef RTCONFIG_IPV6
-	static char *server6_table[][2] = {
-		{"", ""},		/* 0: Unfiltered (handled separately below) */
-		{"", ""},		/* 1: OpenDNS */
-		{"", ""},		/* 2: Norton Connect Safe A (Security) */
-		{"", ""},		/* 3: Norton Connect Safe B (Security + Adult) */
-		{"", ""},		/* 4: Norton Connect Safe C (Sec. + Adult + Violence */
-		{"2a02:6b8::feed:bad","2a02:6b8:0:1::feed:bad"},		/* 5: Secure Mode safe.dns.yandex.ru */
-		{"2a02:6b8::feed:a11","2a02:6b8:0:1::feed:a11"},		/* 6: Family Mode family.dns.yandex.ru */
-		{"", ""},			/* 7: OpenDNS Family Shield */
-		{"", ""},			/* 8: Custom1 - not supported yet */
-		{"", ""},			/* 9: Custom2 - not supported yet */
-		{"", ""},			/* 10: Custom3 - not supported yet */
-		{"", ""},			/* 11: Router */
-		{"", ""}			/* 12: Comodo Secure DNS */
-        };
-#endif
-	// Initialize
-	server[0] = server_table[0][0];
-	server[1] = server_table[0][1];
-
-	if (mode >= (sizeof(server_table)/sizeof(server_table[0]))) mode = 0;
-
-	// Custom IP, will fallback to router IP if it's not defined.  Only IPv4 supported.
-	if ((mode == 8) && (proto == AF_INET)) {
-		server[0] = nvram_safe_get("dnsfilter_custom1");
-		server[1] = server_table[mode][1];
-	} else if ((mode == 9) && (proto == AF_INET)) {
-		server[0] = nvram_safe_get("dnsfilter_custom2");
-		server[1] = server_table[mode][1];
-	} else if ((mode == 10) && (proto == AF_INET)) {
-		server[0] = nvram_safe_get("dnsfilter_custom3");
-		server[1] = server_table[mode][1];
-	// Force to use what's returned by the router's DHCP server to clients (which means either
-	// the router's IP, or a user-defined nameserver from the DHCP webui page)
-	} else if (mode == 11) {
-		server[0] = nvram_safe_get("dhcp_dns1_x");
-		server[1] = server_table[mode][1];
-	} else {
-#ifdef RTCONFIG_IPV6	// Also handle IPv6 custom servers, which are always empty for now
-		if (proto == AF_INET6) {
-			server[0] = server6_table[mode][0];
-			server[1] = server6_table[mode][1];
-		} else
-#endif
-		{
-			server[0] = server_table[mode][0];
-			server[1] = server_table[mode][1];
-		}
-	}
-
-// Ensure that custom and DHCP-provided DNS do contain something
-	if (((mode == 8) || (mode == 9) || (mode == 10) || (mode == 11)) && (!strlen(server[0])) && (proto == AF_INET)) {
-		server[0] = nvram_safe_get("lan_ipaddr");
-	}
-
-// Report how many non-empty server we are returning
-	if (strlen(server[0])) count++;
-	if (strlen(server[1])) count++;
-	return count;
-}
-#endif
 
 // Takes one argument:  0 = update failure
 //                      1 (or missing argument) = update success

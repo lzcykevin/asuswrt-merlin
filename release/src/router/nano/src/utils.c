@@ -1,8 +1,7 @@
 /**************************************************************************
  *   utils.c  --  This file is part of GNU nano.                          *
  *                                                                        *
- *   Copyright (C) 1999, 2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007,  *
- *   2008, 2009, 2010, 2011, 2013, 2014 Free Software Foundation, Inc.    *
+ *   Copyright (C) 1999-2011, 2013-2017 Free Software Foundation, Inc.    *
  *   Copyright (C) 2016 Benno Schulenberg                                 *
  *                                                                        *
  *   GNU nano is free software: you can redistribute it and/or modify     *
@@ -61,30 +60,29 @@ void get_homedir(void)
 int digits(ssize_t n)
 {
     if (n < 100000) {
-        if (n < 1000) {
-            if (n < 100)
-                return 2;
-            else
-                return 3;
-        } else {
-            if (n < 10000)
-                return 4;
-            else
-                return 5;
-        }
+	if (n < 1000) {
+	    if (n < 100)
+		return 2;
+	    else
+		return 3;
+	} else {
+	    if (n < 10000)
+		return 4;
+	    else
+		return 5;
+	}
     } else {
-        if (n < 10000000) {
-            if (n < 1000000)
-                return 6;
-            else
-                return 7;
-        }
-        else {
-            if (n < 100000000)
-                return 8;
-            else
-                return 9;
-        }
+	if (n < 10000000) {
+	    if (n < 1000000)
+		return 6;
+	    else
+		return 7;
+	} else {
+	    if (n < 100000000)
+		return 8;
+	    else
+		return 9;
+	}
     }
 }
 #endif
@@ -118,7 +116,7 @@ bool parse_line_column(const char *str, ssize_t *line, ssize_t *column)
     const char *comma;
 
     while (*str == ' ')
-       str++;
+	str++;
 
     comma = strpbrk(str, "m,. /;");
 
@@ -215,7 +213,7 @@ const char *fixbounds(const char *r)
  * a separate word?  That is: is it not part of a longer word?*/
 bool is_separate_word(size_t position, size_t length, const char *buf)
 {
-    char before[mb_cur_max()], after[mb_cur_max()];
+    char before[MAXCHARLEN], after[MAXCHARLEN];
     size_t word_end = position + length;
 
     /* Get the characters before and after the word, if any. */
@@ -238,6 +236,13 @@ bool is_separate_word(size_t position, size_t length, const char *buf)
 const char *strstrwrapper(const char *haystack, const char *needle,
 	const char *start)
 {
+    if (*needle == '\0') {
+#ifndef NANO_TINY
+	statusline(ALERT, "Searching for nothing -- please report a bug");
+#endif
+	return (char *)start;
+    }
+
     if (ISSET(USE_REGEXP)) {
 	if (ISSET(BACKWARDS_SEARCH)) {
 	    size_t last_find, ceiling, far_end;
@@ -276,7 +281,7 @@ const char *strstrwrapper(const char *haystack, const char *needle,
 	    regmatches[0].rm_eo = far_end;
 	    if (regexec(&search_regexp, haystack, 10, regmatches,
 					REG_STARTEND) != 0)
-		statusline(ALERT, "BAD: failed to refind the match!");
+		return NULL;
 
 	    return haystack + regmatches[0].rm_so;
 	}
@@ -393,10 +398,10 @@ size_t xplustabs(void)
  * not overshoot the given column. */
 size_t actual_x(const char *text, size_t column)
 {
-    size_t index = 0;
-	/* The index in text, returned. */
+    const char *start = text;
+	/* From where we start walking through the text. */
     size_t width = 0;
-	/* The screen display width to text[index], in columns. */
+	/* The current accumulated span, in columns. */
 
     while (*text != '\0') {
 	int charlen = parse_mbchar(text, NULL, &width);
@@ -404,11 +409,10 @@ size_t actual_x(const char *text, size_t column)
 	if (width > column)
 	    break;
 
-	index += charlen;
 	text += charlen;
     }
 
-    return index;
+    return (text - start);
 }
 
 /* A strnlen() with tabs and multicolumn characters factored in:
@@ -454,7 +458,7 @@ void new_magicline(void)
     openfile->totsize++;
 }
 
-#ifndef NANO_TINY
+#if !defined(NANO_TINY) || defined(ENABLE_HELP)
 /* Remove the magicline from filebot, if there is one and it isn't the
  * only line in the file.  Assume that edittop and current are not at
  * filebot. */
@@ -468,7 +472,9 @@ void remove_magicline(void)
 	openfile->totsize--;
     }
 }
+#endif
 
+#ifndef NANO_TINY
 /* Set top_x and bot_x to the top and bottom x-coordinates of the mark,
  * respectively, based on the locations of top and bot.  If
  * right_side_up isn't NULL, set it to TRUE if the mark begins with
@@ -537,7 +543,7 @@ size_t get_totsize(const filestruct *begin, const filestruct *end)
 }
 
 #ifdef DEBUG
-/* Dump the filestruct inptr to stderr. */
+/* Dump the given buffer to stderr. */
 void dump_filestruct(const filestruct *inptr)
 {
     if (inptr == openfile->fileage)
@@ -553,7 +559,7 @@ void dump_filestruct(const filestruct *inptr)
     }
 }
 
-/* Dump the current buffer's filestruct to stderr in reverse. */
+/* Dump the current buffer to stderr in reverse. */
 void dump_filestruct_reverse(void)
 {
     const filestruct *fileptr = openfile->filebot;

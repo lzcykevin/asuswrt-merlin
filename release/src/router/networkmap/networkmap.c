@@ -103,6 +103,12 @@ struct apple_model_handler apple_model_handlers[] = {
 	{ "d101ap",	"iPhone 7",	"10"},
 	{ "d11ap",	"iPhone 7 Plus","10"},
 	{ "d111ap",	"iPhone 7 Plus","10"},
+	{ "d20ap",	"iPhone 8"     ,"10"},
+	{ "d201ap",	"iPhone 8"     ,"10"},
+	{ "d21ap",	"iPhone 8 Plus","10"},
+	{ "d211ap",	"iPhone 8 Plus","10"},
+	{ "d22ap",	"iPhone X",     "10"},
+	{ "d221ap",	"iPhone X",     "10"},
         { "n45ap",      "iPod touch",	"21" },
         { "n72ap",      "iPod touch 2G","21" },
         { "n18ap",      "iPod touch 3G","21" },
@@ -1002,10 +1008,6 @@ int main(int argc, char *argv[])
 #if defined(RTCONFIG_QCA) && defined(RTCONFIG_WIRELESSREPEATER)
 	if (nvram_get_int("sw_mode") == SW_MODE_REPEATER && (mac = getStaMAC()) != NULL)
 		strncpy(router_mac, mac, sizeof(router_mac));
-#endif
-#ifdef RTCONFIG_GMAC3
-        if(nvram_match("gmac3_enable", "1"))
-		strcpy(router_mac, nvram_safe_get("et2macaddr"));
 #endif
         inet_aton(router_ipaddr, &router_addr.sin_addr);
         memcpy(my_ipaddr,  &router_addr.sin_addr, 4);

@@ -18,10 +18,9 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program (see the file COPYING included with this
- *  distribution); if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *  You should have received a copy of the GNU General Public License along
+ *  with this program; if not, write to the Free Software Foundation, Inc.,
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 /**
@@ -452,6 +451,8 @@ ssl_set_auth_nocache(void)
 {
     passbuf.nocache = true;
     auth_user_pass.nocache = true;
+    /* wait for push-reply, because auth-token may invert nocache */
+    auth_user_pass.wait_for_push = true;
 }
 
 /*
@@ -460,6 +461,14 @@ ssl_set_auth_nocache(void)
 void
 ssl_set_auth_token(const char *token)
 {
+    if (auth_user_pass.nocache)
+    {
+        msg(M_INFO,
+            "auth-token received, disabling auth-nocache for the "
+            "authentication token");
+        auth_user_pass.nocache = false;
+    }
+
     set_auth_token(&auth_user_pass, token);
 }
 
@@ -832,14 +841,7 @@ print_key_id(struct tls_multi *multi, struct gc_arena *gc)
     return BSTR(&out);
 }
 
-/*
- * Given a key_method, return true if op
- * represents the required form of hard_reset.
- *
- * If key_method = 0, return true if any
- * form of hard reset is used.
- */
-static bool
+bool
 is_hard_reset(int op, int key_method)
 {
     if (!key_method || key_method == 1)
@@ -1614,8 +1616,8 @@ tls1_P_hash(const md_kt_t *md_kt,
 {
     struct gc_arena gc = gc_new();
     int chunk;
-    hmac_ctx_t ctx;
-    hmac_ctx_t ctx_tmp;
+    hmac_ctx_t *ctx;
+    hmac_ctx_t *ctx_tmp;
     uint8_t A1[MAX_HMAC_KEY_LENGTH];
     unsigned int A1_len;
 
@@ -1624,8 +1626,8 @@ tls1_P_hash(const md_kt_t *md_kt,
     const uint8_t *out_orig = out;
 #endif
 
-    CLEAR(ctx);
-    CLEAR(ctx_tmp);
+    ctx = hmac_ctx_new();
+    ctx_tmp = hmac_ctx_new();
 
     dmsg(D_SHOW_KEY_SOURCE, "tls1_P_hash sec: %s", format_hex(sec, sec_len, 0, &gc));
     dmsg(D_SHOW_KEY_SOURCE, "tls1_P_hash seed: %s", format_hex(seed, seed_len, 0, &gc));
@@ -1633,36 +1635,38 @@ tls1_P_hash(const md_kt_t *md_kt,
     chunk = md_kt_size(md_kt);
     A1_len = md_kt_size(md_kt);
 
-    hmac_ctx_init(&ctx, sec, sec_len, md_kt);
-    hmac_ctx_init(&ctx_tmp, sec, sec_len, md_kt);
+    hmac_ctx_init(ctx, sec, sec_len, md_kt);
+    hmac_ctx_init(ctx_tmp, sec, sec_len, md_kt);
 
-    hmac_ctx_update(&ctx,seed,seed_len);
-    hmac_ctx_final(&ctx, A1);
+    hmac_ctx_update(ctx,seed,seed_len);
+    hmac_ctx_final(ctx, A1);
 
     for (;; )
     {
-        hmac_ctx_reset(&ctx);
-        hmac_ctx_reset(&ctx_tmp);
-        hmac_ctx_update(&ctx,A1,A1_len);
-        hmac_ctx_update(&ctx_tmp,A1,A1_len);
-        hmac_ctx_update(&ctx,seed,seed_len);
+        hmac_ctx_reset(ctx);
+        hmac_ctx_reset(ctx_tmp);
+        hmac_ctx_update(ctx,A1,A1_len);
+        hmac_ctx_update(ctx_tmp,A1,A1_len);
+        hmac_ctx_update(ctx,seed,seed_len);
 
         if (olen > chunk)
         {
-            hmac_ctx_final(&ctx, out);
+            hmac_ctx_final(ctx, out);
             out += chunk;
             olen -= chunk;
-            hmac_ctx_final(&ctx_tmp, A1); /* calc the next A1 value */
+            hmac_ctx_final(ctx_tmp, A1); /* calc the next A1 value */
         }
         else    /* last one */
         {
-            hmac_ctx_final(&ctx, A1);
+            hmac_ctx_final(ctx, A1);
             memcpy(out,A1,olen);
             break;
         }
     }
-    hmac_ctx_cleanup(&ctx);
-    hmac_ctx_cleanup(&ctx_tmp);
+    hmac_ctx_cleanup(ctx);
+    hmac_ctx_free(ctx);
+    hmac_ctx_cleanup(ctx_tmp);
+    hmac_ctx_free(ctx_tmp);
     secure_memzero(A1, sizeof(A1));
 
     dmsg(D_SHOW_KEY_SOURCE, "tls1_P_hash out: %s", format_hex(out_orig, olen_orig, 0, &gc));
@@ -1954,7 +1958,7 @@ cleanup:
 
 bool
 tls_session_update_crypto_params(struct tls_session *session,
-                                 const struct options *options, struct frame *frame)
+                                 struct options *options, struct frame *frame)
 {
     if (!session->opt->server
         && 0 != strcmp(options->ciphername, session->opt->config_ciphername)
@@ -1963,7 +1967,15 @@ tls_session_update_crypto_params(struct tls_session *session,
         msg(D_TLS_ERRORS, "Error: pushed cipher not allowed - %s not in %s or %s",
             options->ciphername, session->opt->config_ciphername,
             options->ncp_ciphers);
+        /* undo cipher push, abort connection setup */
+        options->ciphername = session->opt->config_ciphername;
         return false;
+    }
+
+    if (strcmp(options->ciphername, session->opt->config_ciphername))
+    {
+        msg(D_HANDSHAKE, "Data Channel: using negotiated cipher '%s'",
+            options->ciphername);
     }
 
     init_key_type(&session->opt->key_type, options->ciphername,
@@ -2383,7 +2395,21 @@ key_method_2_write(struct buffer *buf, struct tls_session *session)
         {
             goto error;
         }
-        purge_user_pass(&auth_user_pass, false);
+        /* if auth-nocache was specified, the auth_user_pass object reaches
+         * a "complete" state only after having received the push-reply
+         * message.
+         * This is the case because auth-token statement in a push-reply would
+         * invert its nocache.
+         *
+         * For this reason, skip the purge operation here if no push-reply
+         * message has been received yet.
+         *
+         * This normally happens upon first negotiation only.
+         */
+        if (!auth_user_pass.wait_for_push)
+        {
+            purge_user_pass(&auth_user_pass, false);
+        }
     }
     else
     {
@@ -2499,7 +2525,7 @@ key_method_2_read(struct buffer *buf, struct tls_multi *multi, struct tls_sessio
 
     struct gc_arena gc = gc_new();
     char *options;
-    struct user_pass *up;
+    struct user_pass *up = NULL;
 
     /* allocate temporary objects */
     ALLOC_ARRAY_CLEAR_GC(options, char, TLS_OPTIONS_LEN, &gc);
@@ -2661,6 +2687,10 @@ key_method_2_read(struct buffer *buf, struct tls_multi *multi, struct tls_sessio
 
 error:
     secure_memzero(ks->key_src, sizeof(*ks->key_src));
+    if (up)
+    {
+        secure_memzero(up, sizeof(*up));
+    }
     buf_clear(buf);
     gc_free(&gc);
     return false;
@@ -3723,7 +3753,12 @@ tls_pre_decrypt(struct tls_multi *multi,
                                 /* Save incoming ciphertext packet to reliable buffer */
                                 struct buffer *in = reliable_get_buf(ks->rec_reliable);
                                 ASSERT(in);
-                                ASSERT(buf_copy(in, buf));
+                                if(!buf_copy(in, buf))
+                                {
+                                    msg(D_MULTI_DROPPED,
+                                        "Incoming control channel packet too big, dropping.");
+                                    goto error;
+                                }
                                 reliable_mark_active_incoming(ks->rec_reliable, in, id, op);
                             }
 
@@ -4215,6 +4250,13 @@ print_data:
 
 done:
     return BSTR(&out);
+}
+
+void
+delayed_auth_pass_purge(void)
+{
+    auth_user_pass.wait_for_push = false;
+    purge_user_pass(&auth_user_pass, false);
 }
 
 #else  /* if defined(ENABLE_CRYPTO) */

@@ -486,68 +486,6 @@ int with_ipv6_linklocal_addr(const char *ifname)
 	return (getifaddr(ifname, AF_INET6, GIF_LINKLOCAL) != NULL);
 }
 
-#if 1 /* temporary till httpd route table redo */
-static const unsigned flagvals[] = { /* Must agree with flagchars[]. */
-	RTF_GATEWAY,
-	RTF_HOST,
-	RTF_REINSTATE,
-	RTF_DYNAMIC,
-	RTF_MODIFIED,
-	RTF_DEFAULT,
-	RTF_ADDRCONF,
-	RTF_CACHE
-};
-
-static const char flagchars[] =
-	"GHRDM"
-	"DAC"
-;
-const char str_default[] = "default";
-
-void ipv6_set_flags(char *flagstr, int flags)
-{
-	int i;
-
-	*flagstr++ = 'U';
-
-	for (i = 0; (*flagstr = flagchars[i]) != 0; i++) {
-		if (flags & flagvals[i]) {
-			++flagstr;
-		}
-	}
-}
-
-char* INET6_rresolve(struct sockaddr_in6 *sin6, int numeric)
-{
-	char name[128];
-	int s;
-
-	if (sin6->sin6_family != AF_INET6) {
-		fprintf(stderr, "rresolve: unsupported address family %d!",
-			sin6->sin6_family);
-		errno = EAFNOSUPPORT;
-		return NULL;
-	}
-	if (numeric & 0x7FFF) {
-		inet_ntop(AF_INET6, &sin6->sin6_addr, name, sizeof(name));
-		return strdup(name);
-	}
-	if (IN6_IS_ADDR_UNSPECIFIED(&sin6->sin6_addr)) {
-		if (numeric & 0x8000)
-			return strdup(str_default);
-		return strdup("*");
-	}
-
-	s = getnameinfo((struct sockaddr *) sin6, sizeof(struct sockaddr_in6),
-				name, sizeof(name), NULL, 0, 0);
-	if (s) {
-		perror("getnameinfo failed");
-		return NULL;
-	}
-	return strdup(name);
-}
-#endif
-
 static int ipv6_expand(char *buf, char *str, struct in6_addr *addr)
 {
 	char *dst = buf;
@@ -1632,6 +1570,7 @@ _dprintf("%s: Finish.\n", __FUNCTION__);
 void logmessage_normal(char *logheader, char *fmt, ...){
   va_list args;
   char buf[512];
+  char logheader2[33];
   int level;
 
   va_start(args, fmt);
@@ -1641,7 +1580,9 @@ void logmessage_normal(char *logheader, char *fmt, ...){
   level = nvram_get_int("message_loglevel");
   if (level > 7) level = 7;
 
-  openlog(logheader, 0, 0);
+  strlcpy(logheader2, logheader, sizeof (logheader2));
+  replace_char(logheader2, ' ', '_');
+  openlog(logheader2, 0, 0);
   syslog(level, buf);
   closelog();
   va_end(args);
@@ -1801,8 +1742,7 @@ char *get_parsed_crt(const char *name, char *buf, size_t buf_len)
 	int len, i;
 #if defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2) || defined(RTCONFIG_UBIFS)
 	FILE *fp;
-	char tmpBuf[256] = {0};
-	char *p = buf;
+	char filename[256] = {0};
 #endif
 
 	value = nvram_safe_get(name);
@@ -1811,10 +1751,12 @@ char *get_parsed_crt(const char *name, char *buf, size_t buf_len)
 #if defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2) || defined(RTCONFIG_UBIFS)
 	if(!check_if_dir_exist(OVPN_FS_PATH))
 		mkdir(OVPN_FS_PATH, S_IRWXU);
-	snprintf(tmpBuf, sizeof(tmpBuf) -1, "%s/%s", OVPN_FS_PATH, name);
+	snprintf(filename, sizeof(filename), "%s/%s", OVPN_FS_PATH, name);
 #endif
 
 	if(len) {
+		if (len >= buf_len) len = buf_len-1;
+
 		for (i=0; (i < len); i++) {
 			if (value[i] == '>')
 				buf[i] = '\n';
@@ -1825,9 +1767,9 @@ char *get_parsed_crt(const char *name, char *buf, size_t buf_len)
 
 #if defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2) || defined(RTCONFIG_UBIFS)
 		//save to file and then clear nvram value
-		fp = fopen(tmpBuf, "w");
+		fp = fopen(filename, "w");
 		if(fp) {
-			chmod(tmpBuf, S_IRUSR|S_IWUSR);
+			chmod(filename, S_IRUSR|S_IWUSR);
 			fprintf(fp, "%s", buf);
 			fclose(fp);
 			nvram_set(name, "");
@@ -1837,26 +1779,17 @@ char *get_parsed_crt(const char *name, char *buf, size_t buf_len)
 	else {
 #if defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2) || defined(RTCONFIG_UBIFS)
 		//nvram value cleard, get from file
-		fp = fopen(tmpBuf, "r");
-		if(fp) {
-			while(fgets(buf, buf_len, fp)) {
-				if(!strncmp(buf, "-----BEGIN", 10) || !strncmp(buf, "none", 4))
-					break;
-			}
-			if(feof(fp) &&  strncmp(buf, "none", 4)) {
-				fclose(fp);
-				memset(buf, 0, buf_len);
-				return buf;
-			}
-			p += strlen(buf);
-			memset(tmpBuf, 0, sizeof(tmpBuf));
-			while(fgets(tmpBuf, sizeof(tmpBuf), fp)) {
-				strncpy(p, tmpBuf, strlen(tmpBuf));
-				p += strlen(tmpBuf);
-			}
-			*p = '\0';
-			fclose(fp);
+
+		snprintf(filename, sizeof(filename), "%s/%s", OVPN_FS_PATH, name);
+
+		len = f_read(filename, buf, buf_len-1);
+		if (len < 0) {
+			buf[0] = '\0';
+		} else {
+			buf[len] = '\0';
 		}
+#else
+		buf[0] = '\0';
 #endif
 	}
 	return buf;
@@ -1897,12 +1830,12 @@ int set_crt_parsed(const char *name, char *file_path)
 		}
 		p += strlen(buffer);
 		//if( *(p-1) == '\n' )
-			//*(p-1) = '>';
+			// *(p-1) = '>';
 		while(fgets(buffer2, sizeof(buffer2), fp)) {
 			strncpy(p, buffer2, strlen(buffer2));
 			p += strlen(buffer2);
 			//if( *(p-1) == '\n' )
-				//*(p-1) = '>';
+				// *(p-1) = '>';
 		}
 		*p = '\0';
 		nvram_set(name, buffer);
@@ -2190,47 +2123,6 @@ int get_iface_hwaddr(char *name, unsigned char *hwaddr)
 	close(s);
 	return ret;
 }
-
-int _xstart(const char *cmd, ...)
-{
-        va_list ap;
-        char *argv[16];
-        int argc;
-        int pid;
-
-        argv[0] = (char *)cmd;
-        argc = 1;
-        va_start(ap, cmd);
-        while ((argv[argc++] = va_arg(ap, char *)) != NULL) {
-                //
-        }
-        va_end(ap);
-
-        return _eval(argv, NULL, 0, &pid);
-}
-
-long fappend(FILE *out, const char *fname)
-{
-	FILE *in;
-	char buf[1024];
-	int n;
-	long r;
-
-	if ((in = fopen(fname, "r")) == NULL) return -1;
-	r = 0;
-	while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
-		if (fwrite(buf, 1, n, out) != n) {
-			r = -1;
-			break;
-		}
-		else {
-			r += n;
-		}
-	}
-	fclose(in);
-	return r;
-}
-
 
 #if defined(RTCONFIG_SOC_IPQ8064)
 /**
@@ -2621,85 +2513,3 @@ void deauth_guest_sta(char *wlif_name, char *mac_addr)
 #endif
 }
 #endif
-
-void run_custom_script(char *name, char *args)
-{
-	char script[120];
-
-	snprintf(script, sizeof(script), "/jffs/scripts/%s", name);
-
-	if(f_exists(script)) {
-		if (nvram_match("jffs2_scripts", "0")) {
-			logmessage("custom script", "Found %s, but custom script execution is disabled!", name);
-			return;
-		}
-		if (args)
-			logmessage("custom script" ,"Running %s (args: %s)", script, args);
-		else
-			logmessage("custom script" ,"Running %s", script);
-		xstart(script, args);
-	}
-}
-
-void run_custom_script_blocking(char *name, char *args)
-{
-	char script[120];
-
-	snprintf(script, sizeof(script), "/jffs/scripts/%s", name);
-
-	if(f_exists(script)) {
-		if (nvram_match("jffs2_scripts", "0")) {
-			logmessage("custom script", "Found %s, but custom script execution is disabled!", name);
-			return;
-		}
-		if (args)
-			logmessage("custom script" ,"Running %s (args: %s)", script, args);
-		else
-			logmessage("custom script" ,"Running %s", script);
-		eval(script, args);
-	}
-
-}
-
-void run_postconf(char *name, char *config)
-{
-	char filename[64];
-
-	snprintf(filename, sizeof (filename), "%s.postconf", name);
-	run_custom_script_blocking(filename, config);
-}
-
-
-void use_custom_config(char *config, char *target)
-{
-        char filename[256];
-
-        snprintf(filename, sizeof(filename), "/jffs/configs/%s", config);
-
-	if (check_if_file_exist(filename)) {
-		if (nvram_match("jffs2_scripts", "0")) {
-			logmessage("custom config", "Found %s, but custom configs are disabled!", filename);
-			return;
-		}
-		logmessage("custom config", "Using custom %s config file.", filename);
-		eval("cp", filename, target, NULL);
-	}
-}
-
-
-void append_custom_config(char *config, FILE *fp)
-{
-	char filename[256];
-
-	snprintf(filename, sizeof(filename), "/jffs/configs/%s.add", config);
-
-	if (check_if_file_exist(filename)) {
-		if (nvram_match("jffs2_scripts", "0")) {
-			logmessage("custom config", "Found %s, but custom configs are disabled!", filename);
-			return;
-		}
-		logmessage("custom config", "Appending content of %s.", filename);
-		fappend(fp, filename);
-	}
-}
-

@@ -16,10 +16,9 @@
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
  *
- *  You should have received a copy of the GNU General Public License
- *  along with this program (see the file COPYING included with this
- *  distribution); if not, write to the Free Software Foundation, Inc.,
- *  59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *  You should have received a copy of the GNU General Public License along
+ *  with this program; if not, write to the Free Software Foundation, Inc.,
+ *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -98,10 +97,10 @@ tls_crypt_wrap(const struct buffer *src, struct buffer *dst,
          format_hex(BPTR(src), BLEN(src), 80, &gc));
 
     /* Get packet ID */
+    if (!packet_id_write(&opt->packet_id.send, dst, true, false))
     {
-        struct packet_id_net pin;
-        packet_id_alloc_outgoing(&opt->packet_id.send, &pin, true);
-        packet_id_write(&pin, dst, true, false);
+        msg(D_CRYPT_ERRORS, "TLS-CRYPT ERROR: packet ID roll over.");
+        goto err;
     }
 
     dmsg(D_PACKET_CONTENT, "TLS-CRYPT WRAP AD: %s",

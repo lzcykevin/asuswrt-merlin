@@ -1,8 +1,7 @@
 /**************************************************************************
  *   color.c  --  This file is part of GNU nano.                          *
  *                                                                        *
- *   Copyright (C) 2001, 2002, 2003, 2004, 2005, 2006, 2007, 2008, 2009,  *
- *   2010, 2011, 2013, 2014, 2015 Free Software Foundation, Inc.          *
+ *   Copyright (C) 2001-2011, 2013-2017 Free Software Foundation, Inc.    *
  *   Copyright (C) 2014, 2015, 2016, 2017 Benno Schulenberg               *
  *                                                                        *
  *   GNU nano is free software: you can redistribute it and/or modify     *
@@ -25,7 +24,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
-#include <time.h>
 #include <unistd.h>
 
 #ifdef HAVE_MAGIC_H
@@ -55,8 +53,9 @@ void set_colorpairs(void)
     for (i = 0; i < NUMBER_OF_ELEMENTS; i++) {
 	bool bright = FALSE;
 
-	if (parse_color_names(specified_color_combo[i],
-			&foreground, &background, &bright)) {
+	if (specified_color_combo[i] != NULL &&
+			parse_color_names(specified_color_combo[i],
+				&foreground, &background, &bright)) {
 	    if (foreground == -1 && !using_defaults)
 		foreground = COLOR_WHITE;
 	    if (background == -1 && !using_defaults)
@@ -64,8 +63,7 @@ void set_colorpairs(void)
 	    init_pair(i + 1, foreground, background);
 	    interface_color_pair[i] =
 			COLOR_PAIR(i + 1) | (bright ? A_BOLD : A_NORMAL);
-	}
-	else {
+	} else {
 	    if (i != FUNCTION_TAG)
 		interface_color_pair[i] = hilite_attribute;
 	    else
@@ -133,6 +131,8 @@ void color_init(void)
 	fprintf(stderr, "init_pair(): fg = %hd, bg = %hd\n", foreground, background);
 #endif
     }
+
+    have_palette = TRUE;
 }
 
 /* Try to match the given shibboleth string with one of the regexes in

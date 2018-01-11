@@ -568,7 +568,7 @@ void stop_usb_program(int mode)
 #endif
 
 #if defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NETINSTALLED)
-#if (defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NOLOCALDM)) && defined(RTCONFIG_CLOUDSYNC)
+#if defined(RTCONFIG_CLOUDSYNC)
 	if(pids("inotify") || pids("asuswebstorage") || pids("webdav_client") || pids("dropbox_client") || pids("ftpclient") || pids("sambaclient") || pids("usbclient")){
 		_dprintf("%s: stop_cloudsync.\n", __FUNCTION__);
 		stop_cloudsync(-1);
@@ -605,6 +605,11 @@ void stop_usb(int f_force)
 {
 #endif
 	int disabled = !nvram_get_int("usb_enable");
+
+#if defined(RTCONFIG_USB_MODEM) && (defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2) || defined(RTCONFIG_UBIFS))
+	_dprintf("stop_usb: save the modem data.\n");
+	eval("/usr/sbin/modem_status.sh", "bytes+");
+#endif
 
 	stop_usb_program(0);
 
@@ -1101,7 +1106,7 @@ int umount_mountpoint(struct mntent *mnt, uint flags)
 	//run_userfile(mnt->mnt_dir, ".autostop", mnt->mnt_dir, 5);
 	//run_nvscript("script_autostop", mnt->mnt_dir, 5);
 #if defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NETINSTALLED)
-#if (defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NOLOCALDM)) && defined(RTCONFIG_CLOUDSYNC)
+#if defined(RTCONFIG_CLOUDSYNC)
 	char word[PATH_MAX], *next_word;
 	char *b, *nvp, *nv;
 	int type = 0, enable = 0;
@@ -1532,7 +1537,7 @@ done:
 
 		run_custom_script_blocking("post-mount", mountpoint);
 
-#if (defined(RTCONFIG_APP_PREINSTALLED) || defined(RTCONFIG_APP_NOLOCALDM)) && defined(RTCONFIG_CLOUDSYNC)
+#if defined(RTCONFIG_CLOUDSYNC)
 		char word[PATH_MAX], *next_word;
 		char *cloud_setting, *b, *nvp, *nv;
 		int type = 0, rule = 0, enable = 0;
@@ -1971,6 +1976,7 @@ void write_ftpd_conf()
 {
 	FILE *fp;
 	char maxuser[16];
+	int passive_port;
 
 	/* write /etc/vsftpd.conf */
 	fp=fopen("/etc/vsftpd.conf", "w");
@@ -2000,10 +2006,11 @@ void write_ftpd_conf()
 #if (!defined(LINUX30) && LINUX_VERSION_CODE < KERNEL_VERSION(2,6,36))
 	fprintf(fp, "use_sendfile=NO\n");
 #endif
+#ifndef RTCONFIG_BCMARM
+	fprintf(fp, "isolate=NO\n");	// 3.x: Broken for MIPS
+#endif
 
 #ifdef RTCONFIG_IPV6
-/* vsftpd 3.x */
-/*
 	if (ipv6_enabled()) {
 		fprintf(fp, "listen_ipv6=YES\n");
 		// vsftpd 3.x can't use both listen at same time.  We don't specify an interface, so
@@ -2012,13 +2019,20 @@ void write_ftpd_conf()
 	} else {
 		fprintf(fp, "listen=YES\n");
 	}
-*/
-	fprintf(fp, "listen%s=YES\n", ipv6_enabled() ? "_ipv6" : "");
+
 #else
 	fprintf(fp, "listen=YES\n");
 #endif
 	fprintf(fp, "pasv_enable=YES\n");
-	fprintf(fp, "ssl_enable=NO\n");
+	if (nvram_get_int("ftp_wanac")) {
+		passive_port = nvram_get_int("ftp_pasvport");
+		if (passive_port > 0) {
+			if (passive_port > 65505)
+				nvram_set_int("ftp_pasvport", 65505);
+			fprintf(fp, "pasv_min_port=%d\n", passive_port);
+			fprintf(fp, "pasv_max_port=%d\n", passive_port + 30);
+		}
+	}
 	fprintf(fp, "tcp_wrappers=NO\n");
 	strcpy(maxuser, nvram_safe_get("st_max_user"));
 	if ((atoi(maxuser)) > 0)
@@ -2048,6 +2062,18 @@ void write_ftpd_conf()
 	if(!strcmp(nvram_safe_get("enable_ftp_log"), "1")){
 		fprintf(fp, "xferlog_enable=YES\n");
 		fprintf(fp, "xferlog_file=/var/log/vsftpd.log\n");
+	}
+
+	if(nvram_get_int("ftp_tls")){
+		fprintf(fp, "ssl_enable=YES\n");
+		fprintf(fp, "rsa_cert_file=/jffs/ssl/ftp.crt\n");
+		fprintf(fp, "rsa_private_key_file=/jffs/ssl/ftp.key\n");
+
+		if(!check_if_file_exist("/jffs/ssl/ftp.key")||!check_if_file_exist("/jffs/ssl/ftp.crt")){
+			eval("gencert.sh", "ftp");
+		}
+	} else {
+		fprintf(fp, "ssl_enable=NO\n");
 	}
 
 	append_custom_config("vsftpd.conf", fp);
@@ -2522,10 +2548,13 @@ void start_dms(void)
 
 			nvram_set("dms_dbcwd", dbdir);
 
-			strcpy(serial, nvram_safe_get("lan_hwaddr"));
-			if (strlen(serial))
+			conv_mac2(get_lan_hwaddr(), serial);
+			if (strlen(serial)) {
 				for (i = 0; i < strlen(serial); i++)
 					serial[i] = tolower(serial[i]);
+			}
+			else
+				strcpy(serial, "554e4b4e4f57"); //default if no hwaddr
 
 			fprintf(f,
 				"network_interface=%s\n"
@@ -2602,9 +2631,13 @@ void start_dms(void)
 
 			fprintf(f,
 				"serial=%s\n"
-				"model_number=%s.%s\n",
+				"model_number=%s.%s\n"
+				//add explicit uuid based on mac(serial)
+				//since some recent change has resulted in a changing uuid at boot
+				"uuid=4d696e69-444c-164e-9d41-%s\n",
 				serial,
-				rt_version, rt_serialno);
+				rt_version, rt_serialno,
+				serial);
 
 			append_custom_config(MEDIA_SERVER_APP".conf",f);
 
@@ -3039,7 +3072,7 @@ void start_cloudsync(int fromUI)
 
 	cloud_setting = nvram_safe_get("cloud_sync");
 
-	nv = nvp = strdup(nvram_safe_get("cloud_sync"));
+	nv = nvp = strdup(cloud_setting);
 	if(nv){
 		while((b = strsep(&nvp, "<")) != NULL){
 			count = 0;
@@ -4348,12 +4381,15 @@ void start_nfsd(void)
 	if (nvram_match("nfsd_enable", "0")) return;
 
 	/* create directories/files */
-	mkdir("/var/lib", 0755);
-	mkdir("/var/lib/nfs", 0755);
+	mkdir_if_none("/var/lib");
+	mkdir_if_none("/var/lib/nfs");
 #ifdef LINUX26
-	mkdir("/var/lib/nfs/v4recovery", 0755);
+	mkdir_if_none("/var/lib/nfs/v4recovery");
 	mount("nfsd", "/proc/fs/nfsd", "nfsd", MS_MGC_VAL, NULL);
 #endif
+	unlink("/var/lib/nfs/etab");
+	unlink("/var/lib/nfs/xtab");
+	unlink("/var/lib/nfs/rmtab");
 	close(creat("/var/lib/nfs/etab", 0644));
 	close(creat("/var/lib/nfs/xtab", 0644));
 	close(creat("/var/lib/nfs/rmtab", 0644));
@@ -4387,7 +4423,8 @@ void start_nfsd(void)
 	append_custom_config("exports", fp);
 	fclose(fp);
 	run_postconf("exports", NFS_EXPORT);
-	eval("/usr/sbin/portmap");
+	if (!pids("portmap"))
+		eval("/usr/sbin/portmap");
 	eval("/usr/sbin/statd");
 
 	if (nvram_match("nfsd_enable_v2", "1")) {
@@ -4406,18 +4443,20 @@ void start_nfsd(void)
 
 void restart_nfsd(void)
 {
-	eval("/usr/sbin/exportfs", "-au");
-	eval("/usr/sbin/exportfs", "-a");
+	//eval("/usr/sbin/exportfs", "-au");
+	//eval("/usr/sbin/exportfs", "-a");
+	eval("/usr/sbin/exportfs", "-r");
 
 	return;
 }
 
 void stop_nfsd(void)
 {
+	eval("/usr/sbin/exportfs", "-au");
 	killall_tk("mountd");
 	killall("nfsd", SIGKILL);
 	killall_tk("statd");
-	killall_tk("portmap");
+//	killall_tk("portmap");
 
 #ifdef LINUX26
 	umount("/proc/fs/nfsd");

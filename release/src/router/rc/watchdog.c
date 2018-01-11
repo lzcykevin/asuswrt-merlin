@@ -112,11 +112,10 @@ static int modem_flow_count = 0;
 static int modem_data_save = 0;
 #endif
 #endif
-#if defined(RTCONFIG_TOR) && (defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2))
+#if 0 //defined(RTCONFIG_TOR) && (defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2))
 #define TOR_CHECK_PERIOD	10		/* 10 x 30 seconds */
 unsigned int tor_check_count = 0;
 #endif
-
 static struct itimerval itv;
 /* to check watchdog alive */
 #if ! (defined(RTCONFIG_QCA) || defined(RTCONFIG_RALINK))
@@ -1307,9 +1306,6 @@ void btn_check(void)
 				led_control_normal();
 
 				alarmtimer(NORMAL_PERIOD, 0);
-#if (!defined(W7_LOGO) && !defined(WIFI_LOGO))
-				stop_wps_method();
-#endif
 #ifdef RTCONFIG_WIFI_CLONE
 				if (nvram_match("wps_e_success", "1")) {
 #if (defined(PLN12) || defined(PLAC56))
@@ -2482,7 +2478,7 @@ void wanduck_check(void)
 }
 #endif
 
-#if (defined(PLN12) || defined(PLAC56) || defined(PLAC66U))
+#if (defined(PLN11) || defined(PLN12) || defined(PLAC56) || defined(PLAC66U))
 static int client_check_cnt = 0;
 static int no_client_cnt = 0;
 static int plc_wake = 1;
@@ -2535,7 +2531,7 @@ static void client_check(void)
 
 	if (plc_wake == 1 && no_client_cnt >= 5) {
 		//dbg("%s: trigger Powerline to sleep...\n", __func__);
-#if defined(PLN12)
+#if defined(PLN11) || defined(PLN12)
 		doSystem("swconfig dev %s port 1 set power 0", MII_IFNAME);
 #elif defined(PLAC56)
 		set_gpio((nvram_get_int("plc_wake_gpio") & 0xff), 1);
@@ -2547,7 +2543,7 @@ static void client_check(void)
 	}
 	else if (plc_wake == 0 && no_client_cnt == 0) {
 		//dbg("%s: trigger Powerline to wake...\n", __func__);
-#if defined(PLN12)
+#if defined(PLN11) || defined(PLN12)
 		doSystem("swconfig dev %s port 1 set power 1", MII_IFNAME);
 #elif defined(PLAC56)
 		set_gpio((nvram_get_int("plc_wake_gpio") & 0xff), 0);
@@ -2723,6 +2719,8 @@ void qtn_module_check(void)
 			logmessage("QTN", "QTN connection lost[%s][%s]", src_ip, dst_ip);
 			system("reboot &");
 		}
+	} else {
+		failed = 0;
 	}
 	waiting = 0;
 
@@ -3463,14 +3461,13 @@ void rssi_check()
 }
 #endif
 
-#ifdef RTCONFIG_TOR
+#if 0 //#ifdef RTCONFIG_TOR
 #if (defined(RTCONFIG_JFFS2)||defined(RTCONFIG_BRCM_NAND_JFFS2))
 static void Tor_microdes_check() {
 
 	FILE *f;
 	char buf[256];
-	char *ifname, *p;
-	unsigned long counter1, counter2;
+	char *p;
 	struct stat tmp_db_stat, jffs_db_stat;
 	int tmp_stat, jffs_stat;
 
@@ -3487,12 +3484,12 @@ static void Tor_microdes_check() {
 			return;
 		}
 
-		if ((f = fopen("/tmp/torlog", "r")) == NULL) return -1;
+		if ((f = fopen("/tmp/torlog", "r")) == NULL) return;
 
 		while (fgets(buf, sizeof(buf), f)) {
 			if ((p=strstr(buf, "now have enough directory")) == NULL) continue;
 			*p = 0;
-			eval("cp", "-rf", "/tmp/.tordb", "/jffs/.tordb");
+			eval("cp", "-rfa", "/tmp/.tordb", "/jffs/.tordb");
 			break;
 		}
 		fclose(f);
@@ -3707,7 +3704,7 @@ void watchdog(int sig)
 	/* if timer is set to less than 1 sec, then bypass the following */
 	if (itv.it_value.tv_sec == 0) return;
 
-#if (defined(PLN12) || defined(PLAC56) || defined(PLAC66U))
+#if (defined(PLN11) || defined(PLN12) || defined(PLAC56) || defined(PLAC66U))
 	client_check();
 #endif
 
@@ -3794,7 +3791,7 @@ void watchdog(int sig)
 
 	check_hour_monitor_service();
 
-#if defined(RTCONFIG_TOR) && (defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2))
+#if 0 //#if defined(RTCONFIG_TOR) && (defined(RTCONFIG_JFFS2) || defined(RTCONFIG_BRCM_NAND_JFFS2))
 	if (nvram_get_int("Tor_enable"))
 		Tor_microdes_check();
 #endif
